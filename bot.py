@@ -7,7 +7,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.enums import ParseMode
 
-API_TOKEN = "BOT_TOKENINGNI_BU_YERGA_QO‘Y"
+API_TOKEN = "8305656664:AAHbnnCLmR1-szaCgrt3E5z8quaSWtumdRU"
 
 # ===== ADMIN ID =====
 ADMINS = {5732350707}
