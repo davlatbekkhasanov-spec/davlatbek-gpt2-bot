@@ -1,121 +1,156 @@
 # bot.py
-# 1) Shu fayl bilan bir papkada stock.csv tursin
-# 2) TOKEN ni yoz
+# 1) stock.csv shu fayl yonida tursin (code,name,qty)
+# 2) TOKEN ni qo'y
 # 3) pip install aiogram
 # 4) python bot.py
 
 import asyncio
 import csv
 import os
-from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple, Optional
 
-from aiogram import Bot, Dispatcher, Router
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import Command
 from aiogram.types import Message
 
-# ===================== CONFIG =====================
-TOKEN = os.getenv("BOT_TOKEN", "8305656664:AAHbnnCLmR1-szaCgrt3E5z8quaSWtumdRU")  # Railway'da env: BOT_TOKEN
-CSV_PATH = os.getenv("STOCK_CSV_PATH", "stock.csv")         # stock.csv yo'li
-# ==================================================
+TOKEN = os.getenv("BOT_TOKEN", "8305656664:AAHbnnCLmR1-szaCgrt3E5z8quaSWtumdRU")
 
 router = Router()
-STOCK: Dict[str, float] = {}  # name_lower -> qty
 
+# key: normalized name -> (original_name, qty)
+STOCK: Dict[str, Tuple[str, float]] = {}
 
-def load_stock(path: str = CSV_PATH) -> int:
-    """
-    stock.csv format:
-    code,name,qty
-    729686,Forest clean...,4.000
-    """
+# ====== sozlarni "yumshatish" (ruscha/uzcha aralash) ======
+ALIASES = {
+    "shakar": "сахар",
+    "saxar": "сахар",
+    "ruchka": "ручка",
+    "qalam": "ручка",
+}
+
+STOP_WORDS = {
+    "topib", "ber", "berchi", "bering", "beringchi", "bervor", "bervoring",
+    "desa", "de", "deb", "shuni", "shu", "mana", "ilimos", "iltimos",
+    "top", "topibber", "topibberchi", "kerak", "bormi",
+    "bor", "yoqmi", "yo'qmi", "yoq", "yo'q",
+    "menga", "bizga", "meni", "mni", "menga",
+}
+
+def normalize(text: str) -> str:
+    return (
+        text.lower()
+        .replace("ё", "е")
+        .replace("’", "'")
+        .strip()
+    )
+
+def clean_query(text: str) -> str:
+    t = normalize(text)
+
+    # "/check" yozilsa olib tashlaymiz
+    if t.startswith("/check"):
+        t = t.replace("/check", "", 1).strip()
+
+    # aliaslarni almashtiramiz
+    for k, v in ALIASES.items():
+        t = t.replace(k, v)
+
+    # stop so'zlarni olib tashlaymiz
+    parts = [p for p in t.split() if p and p not in STOP_WORDS]
+
+    return " ".join(parts).strip()
+
+def load_stock(path: str = "stock.csv") -> int:
     STOCK.clear()
-    p = Path(path)
-
-    if not p.exists():
+    if not os.path.exists(path):
+        print("❌ stock.csv topilmadi")
         return 0
 
-    with p.open("r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         reader = csv.DictReader(f)
-        # kerakli headerlar: code, name, qty
         for row in reader:
-            if not row:
-                continue
             name = (row.get("name") or "").strip()
             qty_raw = (row.get("qty") or "").strip()
-
             if not name or not qty_raw:
                 continue
-
-            # "4,000" yoki "4.000" bo'lishi mumkin
             qty = float(qty_raw.replace(" ", "").replace(",", "."))
-            STOCK[name.lower()] = qty
+            STOCK[normalize(name)] = (name, qty)
 
+    print(f"✅ Yuklandi: {len(STOCK)} ta товар")
     return len(STOCK)
 
-
 def find_product(query: str) -> Optional[Tuple[str, float]]:
-    q = query.lower().strip()
+    q = clean_query(query)
     if not q:
         return None
 
-    # 1) eng tez: ichida q bo'lsa birinchi topilganini qaytaradi
-    for name_l, qty in STOCK.items():
-        if q in name_l:
-            return name_l, qty
+    # aniq moslik
+    if q in STOCK:
+        return STOCK[q]
+
+    # ichidan qidirish
+    for key, (orig, qty) in STOCK.items():
+        if q in key:
+            return orig, qty
+
     return None
 
 
+# ====== handlers ======
 @router.message(Command("start"))
-async def cmd_start(message: Message):
+async def start_cmd(message: Message):
     await message.answer(
-        "🤖 Sklad bot ishladi.\n\n"
-        "✅ Qidirish: /check товар\n"
-        "🔄 CSV qayta yuklash: /reload\n\n"
-        "Misol: /check forest"
+        "🤖 Склад бот тайёр.\n"
+        "Иккала усул ишлайди:\n"
+        "1) /check товар\n"
+        "2) Оддий ёз: 'ручка борми' ёки 'шакар топиб бер'\n\n"
+        "CSV янгиланса: /reload"
     )
 
-
 @router.message(Command("reload"))
-async def cmd_reload(message: Message):
+async def reload_cmd(message: Message):
     n = load_stock()
-    if n == 0:
-        await message.answer("❌ stock.csv topilmadi yoki bo‘sh.\nFayl shu papkada turganini tekshir.")
-        return
-    await message.answer(f"✅ Yangilandi. {n} ta товар yuklandi.")
-
+    await message.answer(f"✅ Янгиланди: {n} та товар")
 
 @router.message(Command("check"))
-async def cmd_check(message: Message):
-    q = message.text.replace("/check", "", 1).strip()
-    if not q:
-        await message.answer("Товар номини ёз:\n/check шакар")
-        return
-
+async def check_cmd(message: Message):
+    q = message.text
     res = find_product(q)
     if not res:
         await message.answer("❌ Товар топилмади")
         return
+    name, qty = res
+    await message.answer(f"📦 {name}\nОстаток: {qty}")
 
-    name_l, qty = res
-    # name_l lowercase bo'lgani uchun chiroyli ko'rsatamiz:
-    # (agar xohlasang original case saqlash ham mumkin, hozir soddaroq)
-    await message.answer(f"📦 {name_l}\nОстаток: {qty}")
+# /check yozmasa ham tutib oladi:
+# F.text bo'lsa va command bo'lmasa
+@router.message(F.text)
+async def any_text_search(message: Message):
+    text = message.text.strip()
+
+    # command bo'lsa tegmaymiz
+    if text.startswith("/"):
+        return
+
+    # juda qisqa bo'lsa javob bermaymiz (spam bo'lmasin)
+    if len(text) < 3:
+        return
+
+    res = find_product(text)
+    if not res:
+        await message.answer("❌ Товар топилмади")
+        return
+
+    name, qty = res
+    await message.answer(f"📦 {name}\nОстаток: {qty}")
 
 
 async def main():
-    # Bot start paytida 1 marta yuklaymiz
-    n = load_stock()
-    print(f"✅ Stock loaded: {n}")
-
-    bot = Bot(TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    load_stock()
+    bot = Bot(TOKEN)
     dp = Dispatcher()
     dp.include_router(router)
-
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
